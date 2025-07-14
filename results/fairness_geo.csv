@@ -1,0 +1,11 @@
+Location,Total_Transactions,Fraud_Transactions,Fraud_Rate_pct,SPD
+Chicago,10193,95,0.93,-0.23
+Dallas,10076,99,0.98,-0.18
+Houston,9991,105,1.05,-0.11
+Los Angeles,9936,95,0.96,-0.20
+New York,9993,116,1.16,0.00
+Philadelphia,9873,90,0.91,-0.25
+Phoenix,9960,99,0.99,-0.17
+San Antonio,10062,99,0.98,-0.18
+San Diego,10111,115,1.14,-0.02
+San Jose,9805,87,0.89,-0.27

@@ -1,0 +1,5 @@
+TimeCategory,Total_Transactions,Fraud_Transactions,Fraud_Rate_pct,EOD,CI_95_pct
+Night,25059,263,1.05,0.00,"[0.9%, 1.2%]"
+Morning,24900,261,1.05,0.00,"[0.9%, 1.2%]"
+Afternoon,25075,236,0.94,0.11,"[0.8%, 1.1%]"
+Evening,20779,193,0.93,0.12,"[0.8%, 1.1%]"
