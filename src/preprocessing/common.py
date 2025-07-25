@@ -1,17 +1,41 @@
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from ...config.constants import PROTECTED_ATTRS
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
 
-def create_protected_features(df):
-    # Generate dummy variables for protected attributes
-    for attr in PROTECTED_ATTRS['time'] + PROTECTED_ATTRS['location']:
-        if attr not in df.columns:
-            category = attr.split('_')[1]
-            col = 'TimeCategory' if 'Time' in attr else 'Location'
-            df[attr] = (df[col] == category).astype(int)
-    return df
+class TemporalBinner(BaseEstimator, TransformerMixin):
+    # Handles time binning from TransactionDate
+    def __init__(self, time_col='TransactionDate'):
+        self.time_col = time_col
+        
+    def fit(self, X, y=None):
+        return self
+        
+    def transform(self, X):
+        X = X.copy()
+        if self.time_col in X.columns:
+            # Handle both 'HH:MM.S' and 'YYYY-MM-DD HH:MM' formats
+            if X[self.time_col].str.contains('-').any():  # Contains date portion
+                hours = pd.to_datetime(X[self.time_col]).dt.hour
+            else:  # Just time portion
+                hours = X[self.time_col].str.split(':').str[0].astype(int)
+            X['Time_Bin'] = pd.cut(hours, bins=[0,6,12,18,24], 
+                                  labels=['Night','Morning','Afternoon','Evening'],
+                                  right=False)
+        return X
 
-def normalize_amounts(df):
-    # Standard scaling for transaction amounts
-    df['Amount'] = StandardScaler().fit_transform(df[['Amount']])
-    return df
+class AmountScaler(BaseEstimator, TransformerMixin):
+    # Normalizes transaction amounts
+    def __init__(self, method='minmax'):
+        self.method = method
+        
+    def fit(self, X, y=None):
+        return self
+        
+    def transform(self, X):
+        X = X.copy()
+        if 'Amount' in X.columns:
+            if self.method == 'minmax':
+                X['Amount'] = (X['Amount'] - X['Amount'].min()) / (X['Amount'].max() - X['Amount'].min())
+            elif self.method == 'log':
+                X['Amount'] = np.log1p(X['Amount'])
+        return X
