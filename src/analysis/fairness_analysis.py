@@ -1,114 +1,181 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-import os
-import sys
 from pathlib import Path
-from src.utils import setup_logger
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix, classification_report, recall_score
+from fairlearn.metrics import demographic_parity_difference, equalized_odds_difference
+import seaborn as sns
+import matplotlib.style as mplstyle
 
-# Configure imports
-project_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(project_root))
-from src.preprocessing.EDA import FraudDataProcessor
+# Configuration
+RANDOM_STATE = 42
+VALID_STYLES = plt.style.available
 
-logger = setup_logger('fairness_logger')
+def setup_plot_style():
+    # Set up consistent plot style with validation
+    style = 'seaborn-v0_8' if 'seaborn-v0_8' in VALID_STYLES else 'ggplot'
+    plt.style.use(style)
+    sns.set_palette("husl")
+    plt.rcParams.update({
+        'figure.dpi': 300,
+        'savefig.dpi': 300,
+        'font.size': 12
+    })
 
-def calculate_fairness_metrics(df):
-    # Calculate fairness metrics for geographic and temporal dimensions
-    processor = FraudDataProcessor()
-    df = processor.engineer_features(df)
-    
-    # Table 1: Geographic analysis
-    geo_metrics = (df.groupby('Location', observed=True)
-                   .agg(
-                       Total_Transactions=('TransactionID', 'count'),
-                       Fraud_Transactions=('IsFraud', 'sum')
-                   )
-                   .assign(
-                       Fraud_Rate_pct=lambda x: round(x['Fraud_Transactions']/x['Total_Transactions']*100, 2),
-                       SPD=lambda x: x['Fraud_Rate_pct'] - x.loc[x.index == 'New York', 'Fraud_Rate_pct'].values[0]
-                   ))
-    
-    # Table 2: Temporal analysis
-    time_metrics = (df.groupby('TimeCategory', observed=True)
-                     .agg(
-                         Total_Transactions=('TransactionID', 'count'),
-                         Fraud_Transactions=('IsFraud', 'sum')
-                     )
-                     .assign(
-                         Fraud_Rate_pct=lambda x: round(x['Fraud_Transactions']/x['Total_Transactions']*100, 2),
-                         EOD=lambda x: abs(x['Fraud_Rate_pct'] - x.loc[x.index == 'Morning', 'Fraud_Rate_pct'].values[0])
-                     ))
-    
-    # Calculate 95% Confidence Intervals
-    def calculate_ci(row):
-        p = row['Fraud_Rate_pct']
-        n = row['Total_Transactions']
-        std_err = np.sqrt(p * (100 - p) / n)
-        lower = p - 1.96 * std_err
-        upper = p + 1.96 * std_err
-        return f"[{lower:.1f}%, {upper:.1f}%]"
-    
-    time_metrics['CI_95_pct'] = time_metrics.apply(calculate_ci, axis=1)
-    
-    return geo_metrics, time_metrics
+def validate_data_files():
+    required_files = [
+        'data/processed/X_train_smote.csv',
+        'data/processed/y_train_smote.csv',
+        'data/processed/X_test.csv',
+        'data/processed/y_test.csv'
+    ]
+    missing = [f for f in required_files if not Path(f).exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing required data files: {missing}")
 
-def save_metrics(geo_df, time_df, filename_prefix='fairness'):
-    # Save fairness metrics to CSV files
-    os.makedirs('results', exist_ok=True)
-    geo_path = os.path.join('results', f'{filename_prefix}_geo.csv')
-    time_path = os.path.join('results', f'{filename_prefix}_time.csv')
-    
-    geo_df.to_csv(geo_path, float_format='%.2f')
-    time_df.to_csv(time_path, float_format='%.2f')
-    logger.info(f"Metrics saved to {geo_path} and {time_path}")
+def load_data():
+    # Load and validate preprocessed data
+    validate_data_files()
+    return (
+        pd.read_csv('data/processed/X_train_smote.csv'),
+        pd.read_csv('data/processed/y_train_smote.csv').squeeze(),
+        pd.read_csv('data/processed/X_test.csv'),
+        pd.read_csv('data/processed/y_test.csv').squeeze()
+    )
 
-def generate_fairness_report(geo_df, time_df):
-    # Generate visual fairness report
-    plt.style.use('ggplot')
-    sns.set_theme(style="whitegrid")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+def detect_sensitive_features(X):
+    # Find and validate geographic and temporal features
+    geo_features = [col for col in X.columns if col.startswith('Location_')]
+    time_features = [col for col in X.columns if col.startswith('Time_')]
     
-    # Geographic disparities
-    sns.barplot(x=geo_df.index, y='SPD', data=geo_df.reset_index(), ax=ax1)
-    ax1.axhline(0.1, color='r', linestyle='--', label='Fairness Threshold')
-    ax1.axhline(-0.1, color='r', linestyle='--')
-    ax1.set_title('Geographic Bias (SPD)')
-    ax1.set_ylabel('Statistical Parity Difference')
+    if not geo_features:
+        raise ValueError("No geographic features found (expected columns starting with 'Location_')")
+    if not time_features:
+        raise ValueError("No temporal features found (expected columns starting with 'Time_')")
+    
+    return geo_features, time_features
+
+def train_model(X_train, y_train):
+    # Train and validate random forest model
+    model = RandomForestClassifier(
+        random_state=RANDOM_STATE,
+        n_estimators=100,
+        class_weight='balanced'
+    )
+    model.fit(X_train, y_train)
+    return model
+
+def generate_confusion_matrix(y_true, y_pred):
+    # Generate and save confusion matrix
+    Path('results').mkdir(exist_ok=True)
+    cm = confusion_matrix(y_true, y_pred)
+    
+    fig, ax = plt.subplots(figsize=(6, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['Legitimate', 'Fraud'],
+                yticklabels=['Legitimate', 'Fraud'],
+                ax=ax)
+    ax.set_title('Confusion Matrix')
+    ax.set_ylabel('Actual')
+    ax.set_xlabel('Predicted')
+    fig.savefig('results/confusion_matrices.png', bbox_inches='tight')
+    plt.close(fig)
+
+def calculate_group_metrics(y_true, y_pred, group_mask, group_name):
+    # Calculate metrics for a specific group
+    group_y_true = y_true[group_mask]
+    group_y_pred = y_pred[group_mask]
+    
+    return {
+        'group': group_name,
+        'demographic_parity_diff': demographic_parity_difference(
+            y_true, y_pred, 
+            sensitive_features=group_mask.astype(int)
+        ),
+        'equalized_odds_diff': equalized_odds_difference(
+            y_true, y_pred,
+            sensitive_features=group_mask.astype(int)
+        ),
+        'fraud_rate': group_y_pred.mean(),
+        'fraud_recall': recall_score(group_y_true, group_y_pred, pos_label=1, zero_division=0)
+    }
+
+def calculate_fairness_metrics(X_test, y_test, y_pred, sensitive_features, prefix):
+    # Calculate and save fairness metrics by sensitive group
+    group_metrics = [
+        calculate_group_metrics(
+            y_test, y_pred,
+            (X_test[feature] == group),
+            f"{feature}_{group}"
+        )
+        for feature in sensitive_features
+        for group in X_test[feature].unique()
+    ]
+    
+    metrics_df = pd.DataFrame(group_metrics)
+    metrics_df.to_csv(f'results/fairness_{prefix}.csv', index=False)
+    return metrics_df
+
+def generate_fairness_report(geo_metrics, time_metrics):
+    # Generate combined fairness visualization
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Geographic fairness plot
+    geo_metrics.plot.bar(
+        x='group', y='demographic_parity_diff', 
+        ax=ax1, color='skyblue'
+    )
+    ax1.set_title('Geographic Fairness (Demographic Parity)')
+    ax1.set_ylabel('Difference')
     ax1.tick_params(axis='x', rotation=45)
     
-    # Temporal disparities
-    sns.barplot(x=time_df.index, y='EOD', data=time_df.reset_index(), ax=ax2)
-    ax2.axhline(0.05, color='r', linestyle='--', label='Fairness Threshold')
-    ax2.set_title('Temporal Bias (EOD)')
-    ax2.set_ylabel('Equalized Odds Difference')
+    # Temporal fairness plot
+    time_metrics.plot.bar(
+        x='group', y='demographic_parity_diff', 
+        ax=ax2, color='lightgreen'
+    )
+    ax2.set_title('Temporal Fairness (Demographic Parity)')
+    ax2.set_ylabel('Difference')
+    ax2.tick_params(axis='x', rotation=45)
     
-    plt.tight_layout()
-    report_path = os.path.join('results', 'fairness_report.png')
-    plt.savefig(report_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    logger.info(f"Fairness report saved to {report_path}")
+    fig.tight_layout()
+    fig.savefig('results/fairness_report.png', dpi=300)
+    plt.close(fig)
 
-def main():
-    # Run fairness analysis pipeline
-    logger.info("Starting Fairness Analysis...")
+def run_analysis():
+    # Main analysis pipeline with explicit validation
+    setup_plot_style()
     
-    processor = FraudDataProcessor()
-    data_path = os.path.join('data', 'raw', 'credit_card_fraud_dataset.csv')
+    # Load and validate data
+    X_train, y_train, X_test, y_test = load_data()
+    geo_features, time_features = detect_sensitive_features(X_test)
     
-    # Load and process data
-    df = processor.load_data(data_path)
-    df = processor.engineer_features(df)
+    print(f"Analyzing {len(X_test)} transactions with features:")
+    print(f"- Geographic: {geo_features[:3]}...")
+    print(f"- Temporal: {time_features[:3]}...")
     
-    # Calculate and save metrics
-    geo_stats, time_stats = calculate_fairness_metrics(df)
-    save_metrics(geo_stats, time_stats)
-    generate_fairness_report(geo_stats, time_stats)
+    # Train model
+    model = train_model(X_train, y_train)
+    y_pred = model.predict(X_test)
     
-    logger.info("Analysis completed successfully")
-    return True
+    # Generate outputs
+    generate_confusion_matrix(y_test, y_pred)
+    
+    geo_metrics = calculate_fairness_metrics(
+        X_test, y_test, y_pred, geo_features, 'geo'
+    )
+    time_metrics = calculate_fairness_metrics(
+        X_test, y_test, y_pred, time_features, 'time'
+    )
+    
+    generate_fairness_report(geo_metrics, time_metrics)
+    
+    print("\nAnalysis complete. Generated files:")
+    print("- results/confusion_matrices.png")
+    print("- results/fairness_geo.csv")
+    print("- results/fairness_time.csv")
+    print("- results/fairness_report.png")
 
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+if __name__ == '__main__':
+    run_analysis()
