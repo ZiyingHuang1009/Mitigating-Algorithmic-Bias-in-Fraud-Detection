@@ -13,9 +13,7 @@ data/ – Sample datasets or processing scripts
 # Process
 # Phase 1: Data Preparation
 python -m src.preprocessing.EDA
+python -m src.preprocessing.preprocessor
 
-# Phase 2: Fairness Analysis 
-python -m src.analysis.fairness_analysis
-
-# Phase 3: Main Pipeline
+# Phase 2: Main Pipeline
 python -m src.core.main --phase fairness
