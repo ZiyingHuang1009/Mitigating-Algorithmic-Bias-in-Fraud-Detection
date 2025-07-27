@@ -16,4 +16,6 @@ python -m src.preprocessing.EDA
 python -m src.preprocessing.preprocessor
 
 # Phase 2: Main Pipeline
-python -m src.core.main --phase fairness
+python -m src.core.main --phase fairness --version smote
+python -m src.core.main --phase fairness --version adasyn
+python -m src.core.main --phase fairness --version ros
