@@ -13,14 +13,19 @@ data/ – Sample datasets or processing scripts
 # Process
 # Phase 1: Data Preparation
 python -m src.preprocessing.EDA
+
 python -m src.preprocessing.preprocessor
 
 # Phase 2: Main Pipeline
 python -m src.core.main --phase fairness --version smote
+
 python -m src.core.main --phase fairness --version adasyn
+
 python -m src.core.main --phase fairness --version ros
 
 # Phase 3:  Model Evaluation
 python -m src.core.main --phase evaluation --version smote
+
 python -m src.core.main --phase evaluation --version adasyn
+
 python -m src.core.main --phase evaluation --version ros
