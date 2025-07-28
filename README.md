@@ -19,3 +19,8 @@ python -m src.preprocessing.preprocessor
 python -m src.core.main --phase fairness --version smote
 python -m src.core.main --phase fairness --version adasyn
 python -m src.core.main --phase fairness --version ros
+
+# Phase 3:  Model Evaluation
+python -m src.core.main --phase evaluation --version smote
+python -m src.core.main --phase evaluation --version adasyn
+python -m src.core.main --phase evaluation --version ros
