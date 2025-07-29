@@ -1,141 +1,138 @@
-import os
+import logging
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from aif360.datasets import BinaryLabelDataset
+from collections import Counter
+from imblearn.over_sampling import SMOTE, ADASYN, RandomOverSampler
 from ..utils import setup_logger
 
-logger = setup_logger('data_loader')
-
 class DataLoader:
-    def __init__(self, version='original'):
+    def __init__(self, version="smote"):
         self.version = version
-        self.protected_attributes = {
-            'time': ['Time_Morning', 'Time_Night'],
-            'location': ['Location_NYC', 'Location_Philly']
-        }
-        self.privileged_groups = [{'Time_Morning': 1, 'Location_NYC': 1}]
-        self.unprivileged_groups = [{'Time_Night': 1, 'Location_Philly': 1}]
-        self.processed_dir = os.path.join('data', 'processed')
         self.logger = setup_logger('data_loader')
+        
+        # Protected attributes and groups
+        self.protected_attributes = {
+            'time': ['Time_Category_Morning', 'Time_Category_Night'],
+            'location': ['Location_New York', 'Location_Philadelphia']
+        }
+        self.privileged_groups = [
+            {'Time_Category_Morning': 1}, 
+            {'Location_New York': 1}
+        ]
+        self.unprivileged_groups = [
+            {'Time_Category_Night': 1},
+            {'Location_Philadelphia': 1}
+        ]
+
+        # Initialize samplers
+        self.samplers = {
+            'smote': SMOTE(random_state=42),
+            'ros': RandomOverSampler(random_state=42)
+        }
 
     def _get_file_paths(self):
-        # Get file paths for training and test data with validation
-        paths = {
-            'X_train': os.path.join(self.processed_dir, f'X_train_{self.version}.csv'),
-            'y_train': os.path.join(self.processed_dir, f'y_train_{self.version}.csv'),
-            'X_test': os.path.join(self.processed_dir, 'X_test.csv'),
-            'y_test': os.path.join(self.processed_dir, 'y_test.csv')
+        # Validate and return file paths.
+        base_path = Path('data/processed')
+        required_files = {
+            'X_train': base_path / f'X_train_{self.version}.csv',
+            'X_test': base_path / 'X_test.csv',
+            'y_train': base_path / f'y_train_{self.version}.csv',
+            'y_test': base_path / 'y_test.csv'
         }
         
-        # Verify files exist before attempting to load
-        for path in paths.values():
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Data file not found: {path}")
-        return paths
-
-    def _load_labels(self, path, expected_length):
-        # Load and strictly enforce integer labels
-        # Read raw file content first
-        with open(path, 'r') as f:
-            content = f.readlines()
-        
-        # Determine if file has headers
-        has_header = not content[0].strip().replace('.','').isdigit()
-        
-        # Load data with appropriate parameters
-        y = pd.read_csv(path, header=0 if has_header else None)
-        
-        # Take first column and convert to strict integers
-        y_series = y.iloc[:, 0]
-        y_series = pd.to_numeric(y_series, errors='coerce')
-        y_series = y_series.fillna(0)
-        
-        # Convert to integers safely
-        y_array = y_series.astype(int).values
-        
-        # Ensure proper shape and length
-        y_array = y_array.reshape(-1)
-        if len(y_array) != expected_length:
-            self.logger.warning(f"Truncating labels from {len(y_array)} to {expected_length}")
-            y_array = y_array[:expected_length]
+        # Check if files exist
+        missing_files = [f for f, path in required_files.items() if not path.exists()]
+        if missing_files:
+            self.logger.error(f"Missing required files: {missing_files}")
+            raise FileNotFoundError(f"Missing data files: {missing_files}")
             
-        return y_array
+        return required_files
 
-    def _load_features(self, path):
-        # Load features with protected attribute handling
-        X = pd.read_csv(path)
-        for col in X.columns:
-            X[col] = pd.to_numeric(X[col], errors='coerce')
-        return X.fillna(0)
+    def _validate_data_shapes(self, X, y, dataset_name):
+        # Validate that features and labels have matching lengths.
+        if len(X) != len(y):
+            self.logger.error(f"Shape mismatch in {dataset_name}: "
+                            f"X has {len(X)} rows, y has {len(y)} rows")
+            
+            # Attempt automatic alignment by index if possible
+            if isinstance(X, pd.DataFrame) and isinstance(y, (pd.Series, pd.DataFrame)):
+                common_index = X.index.intersection(y.index)
+                if len(common_index) > 0:
+                    self.logger.warning(f"Aligning on {len(common_index)} common indices")
+                    return X.loc[common_index], y.loc[common_index]
+            
+            raise ValueError(f"{dataset_name} shape mismatch: X({len(X)}) vs y({len(y)})")
+        return X, y
 
-    def _ensure_protected_attributes(self, X):
-        # Ensure protected attributes are properly encoded as numerical values
-        # Time categories - already encoded as 0/1
-        if 'Time_Morning' not in X.columns:
-            X['Time_Morning'] = np.random.choice([0, 1], size=len(X), p=[0.4, 0.6])
-            X['Time_Night'] = 1 - X['Time_Morning']
-        
-        # Location categories - already encoded as 0/1
-        if 'Location_NYC' not in X.columns:
-            X['Location_NYC'] = np.random.choice([0, 1], size=len(X), p=[0.3, 0.7])
-            X['Location_Philly'] = 1 - X['Location_NYC']
-        
-        # Remove any string columns
-        string_cols = X.select_dtypes(include=['object']).columns
-        for col in string_cols:
-            if col in X.columns:
-                X.drop(col, axis=1, inplace=True)
-        
-        return X
+    def _convert_labels(self, y):
+        # Convert labels to numeric format with validation.
+        if y.dtype == object:
+            y = y.replace({'IsFraud': 1, 'NotFraud': 0})
+            y = pd.to_numeric(y, errors='coerce')
+            if y.isna().any():
+                invalid_labels = y[y.isna()].index.tolist()
+                self.logger.error(f"Invalid labels at indices: {invalid_labels[:10]}{'...' if len(invalid_labels) > 10 else ''}")
+                raise ValueError("Label contains non-numeric values")
+        return y.astype(int)
 
-    def _create_dataset(self, X, y):
-        # Create BinaryLabelDataset with numerical-only data
-        # Ensure all data is numerical
-        X = X.apply(pd.to_numeric, errors='coerce').fillna(0)
-        y = np.asarray(y, dtype=np.int64).reshape(-1)
+    def _check_class_distribution(self, y):
+        # Validate and analyze class distribution.
+        class_counts = np.bincount(y)
+        self.logger.info(f"Class distribution: 0={class_counts[0]}, 1={class_counts[1]}")
         
-        # Handle protected attributes
-        X = self._ensure_protected_attributes(X)
-        
-        # Get numerical protected attribute names
-        protected_attrs = [col for col in X.columns 
-                         if col.startswith('Time_') or col.startswith('Location_')]
-        
-        # Create dataset
-        dataset_df = X.copy()
-        dataset_df['IsFraud'] = y
-        
-        dataset = BinaryLabelDataset(
-            df=dataset_df,
-            label_names=['IsFraud'],
-            protected_attribute_names=protected_attrs
-        )
-        
-        # Verify numerical types
-        if dataset.labels.dtype != np.int64:
-            dataset.labels = dataset.labels.astype(np.int64)
-        
-        return dataset
+        if len(class_counts) < 2:
+            raise ValueError("Only one class present in training data")
+        if class_counts[1] < 5:
+            self.logger.warning(f"Very few fraud cases ({class_counts[1]}). Consider collecting more data.")
+            
+        return class_counts
+
+    def _apply_sampling(self, X_train, y_train, class_counts):
+        # Apply appropriate sampling technique based on version.
+        if self.version == 'adasyn':
+            n_neighbors = min(5, class_counts[1] - 1)
+            if n_neighbors < 1:
+                self.logger.warning("Not enough samples for ADASYN. Using SMOTE instead")
+                return SMOTE(random_state=42).fit_resample(X_train, y_train)
+                
+            self.logger.info(f"Applying ADASYN with n_neighbors={n_neighbors}")
+            return ADASYN(
+                sampling_strategy='auto',
+                n_neighbors=n_neighbors,
+                random_state=42
+            ).fit_resample(X_train, y_train)
+            
+        sampler = self.samplers.get(self.version)
+        if sampler:
+            return sampler.fit_resample(X_train, y_train)
+            
+        self.logger.warning(f"No sampler configured for version '{self.version}'. Returning original data.")
+        return X_train, y_train
 
     def load_data(self):
-        # Main data loading method with comprehensive validation
+        # Robust data loading with comprehensive validation.
         files = self._get_file_paths()
         
-        # Load data
-        X_train = self._load_features(files['X_train'])
-        X_test = self._load_features(files['X_test'])
-        y_train = self._load_labels(files['y_train'], len(X_train))
-        y_test = self._load_labels(files['y_test'], len(X_test))
-        
-        self.logger.info(f"Final shapes - X_train: {X_train.shape}, y_train: {y_train.shape}")
-        self.logger.info(f"Final shapes - X_test: {X_test.shape}, y_test: {y_test.shape}")
-        
-        # Create datasets
-        train_data = self._create_dataset(X_train, y_train)
-        test_data = self._create_dataset(X_test, y_test)
-        
-        return train_data, test_data, self.privileged_groups, self.unprivileged_groups
+        # Load data with validation
+        X_train = pd.read_csv(files['X_train'])
+        y_train = pd.read_csv(files['y_train'], header=None).squeeze()
+        X_test = pd.read_csv(files['X_test'])
+        y_test = pd.read_csv(files['y_test'], header=None).squeeze()
 
-def load_data(version='original'):
-    # Module-level function to load data
-    return DataLoader(version).load_data()
+        # Convert and validate labels
+        y_train = self._convert_labels(y_train)
+        y_test = self._convert_labels(y_test)
+
+        # Validate shapes
+        X_train, y_train = self._validate_data_shapes(X_train, y_train, 'train')
+        X_test, y_test = self._validate_data_shapes(X_test, y_test, 'test')
+
+        # Check class distribution
+        class_counts = self._check_class_distribution(y_train)
+
+        # Apply sampling
+        X_train, y_train = self._apply_sampling(X_train, y_train, class_counts)
+
+        self.logger.info(f"Final class distribution: {Counter(y_train)}")
+        return (X_train, y_train), (X_test, y_test), self.privileged_groups, self.unprivileged_groups
