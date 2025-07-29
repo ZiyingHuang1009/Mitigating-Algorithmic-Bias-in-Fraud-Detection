@@ -2,32 +2,23 @@ import logging
 import os
 import warnings
 from datetime import datetime
+import sys
 
-def setup_logger(name=__name__, log_level=logging.INFO):
-    # Configure and return a logger.
+def setup_logger(name):
+    # Configure and return a logger instance.
     logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
     
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    handler.setFormatter(formatter)
+    
+    # Avoid adding multiple handlers
     if not logger.handlers:
-        logger.setLevel(log_level)
-        os.makedirs('logs', exist_ok=True)
-        
-        # File handler with daily logs
-        file_handler = logging.FileHandler(
-            os.path.join('logs', f'{datetime.now().strftime("%Y%m%d")}.log')
-        )
-        # Console handler
-        console_handler = logging.StreamHandler()
-        
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
+        logger.addHandler(handler)
     
     return logger
 
