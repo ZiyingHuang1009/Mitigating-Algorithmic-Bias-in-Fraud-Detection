@@ -3,13 +3,13 @@ This repository contains the code, documentation, and resources for Jenny Huang'
 
 # Key Features
 - **Advanced Fraud Detection**: XGBoost, Balanced Random Forest, and Isolation Forest models
-- 
+
 - **Fairness Mitigation**: Demographic parity and equalized odds difference metrics
-- 
+  
 - **Comprehensive Evaluation**: Fraud-specific metrics with threshold optimization
-- 
+  
 - **Modular Pipeline**: Clean separation of data loading, feature engineering, training, and evaluation
-- 
+  
 - **Bias Analysis**: Protected attribute analysis (time, location)
 
 
