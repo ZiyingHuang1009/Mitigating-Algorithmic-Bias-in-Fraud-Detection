@@ -29,3 +29,10 @@ python -m src.core.main --phase evaluation --version smote
 python -m src.core.main --phase evaluation --version adasyn
 
 python -m src.core.main --phase evaluation --version ros
+
+# Phase 4: Update Evaluation 
+python -m src.core.main --phase train --version smote
+
+python -m src.core.main --phase train --version adasyn
+
+python -m src.core.main --phase train --version ros
